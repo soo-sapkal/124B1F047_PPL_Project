@@ -1,127 +1,124 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
-import pandas as pd
+import sqlite3
+from tkinter import Tk, Label, Entry, Button, StringVar, messagebox
 from barcode import Code128
 from barcode.writer import ImageWriter
-import os
-from barcode.codex import Code128
-from barcode.writer import ImageWriter
 
+# Database setup
+def setup_database():
+    conn = sqlite3.connect("products.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS products (
+        serial_number INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        price REAL
+    )
+    """)
+    conn.commit()
+    conn.close()
 
-# File to store product data
-DATA_FILE = 'product_data.csv'
+# Generate Code Function
+def generate_code_gui():
+    name = name_var.get()
+    price = price_var.get()
 
-# Initialize the data file if it doesn't exist
-if not os.path.exists(DATA_FILE):
-    pd.DataFrame(columns=['Serial_Number', 'Name', 'Price']).to_csv(DATA_FILE, index=False)
+    if not name or not price:
+        messagebox.showerror("Input Error", "Please fill in all fields!")
+        return
 
-
-# Function to generate a new product entry
-def generate_code(name, price):
     try:
-        # Load existing data
-        data = pd.read_csv(DATA_FILE)
-        serial_number = len(data) + 1  # Auto-increment serial number
-
-        # Save the barcode as an image
-        barcode = Code128(str(serial_number), writer=ImageWriter())
-        barcode_filename = f"barcode_{serial_number}.png"
-        barcode.save(barcode_filename)
-
-        # Save the new entry to the CSV
-        new_entry = {'Serial_Number': serial_number, 'Name': name, 'Price': price}
-        data = data.append(new_entry, ignore_index=True)
-        data.to_csv(DATA_FILE, index=False)
-
-        messagebox.showinfo("Success", f"Product added!\nSerial Number: {serial_number}\nBarcode saved as {barcode_filename}")
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to generate code: {e}")
-
-
-# Function to display a product based on serial number
-def display_product(serial_number):
-    try:
-        # Load the data
-        data = pd.read_csv(DATA_FILE)
-        product = data[data['Serial_Number'] == int(serial_number)]
-
-        if not product.empty:
-            product_details = f"Serial Number: {serial_number}\nName: {product.iloc[0]['Name']}\nPrice: {product.iloc[0]['Price']}"
-            messagebox.showinfo("Product Details", product_details)
-        else:
-            messagebox.showwarning("Not Found", "Product not found!")
+        price = float(price)
     except ValueError:
-        messagebox.showerror("Error", "Please enter a valid serial number!")
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to display product: {e}")
+        messagebox.showerror("Input Error", "Price must be a valid number!")
+        return
 
+    conn = sqlite3.connect("products.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO products (name, price) VALUES (?, ?)", (name, price))
+    conn.commit()
 
-# Main GUI Application
-class BarcodeApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
+    serial_number = cursor.lastrowid
+    conn.close()
 
-        self.title("Product Management with Barcodes")
-        self.geometry("400x400")
-        self.resizable(False, False)
+    barcode = Code128(str(serial_number), writer=ImageWriter())
+    barcode.save(f"barcode_{serial_number}")
+    messagebox.showinfo("Success", f"Barcode generated for Serial Number: {serial_number}\nSaved as barcode_{serial_number}.png")
+    name_var.set("")
+    price_var.set("")
+    name_entry.focus_set()
 
-        # Tabs for Generate Code and Display Product
-        self.tabs = ttk.Notebook(self)
-        self.tab_generate = ttk.Frame(self.tabs)
-        self.tab_display = ttk.Frame(self.tabs)
+# Display Product Function
+def display_product_gui():
+    barcode_input = barcode_var.get()
 
-        self.tabs.add(self.tab_generate, text="Generate Code")
-        self.tabs.add(self.tab_display, text="Display Product")
-        self.tabs.pack(expand=1, fill="both")
+    if not barcode_input:
+        messagebox.showerror("Input Error", "Please enter a barcode number!")
+        return
 
-        self.create_generate_tab()
-        self.create_display_tab()
+    try:
+        serial_number = int(barcode_input)
+    except ValueError:
+        messagebox.showerror("Input Error", "Barcode number must be a valid integer!")
+        return
 
-    def create_generate_tab(self):
-        # Widgets for Generate Code Tab
-        ttk.Label(self.tab_generate, text="Enter Product Name:").pack(pady=10)
-        self.name_entry = ttk.Entry(self.tab_generate, width=30)
-        self.name_entry.pack()
+    conn = sqlite3.connect("products.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products WHERE serial_number = ?", (serial_number,))
+    product = cursor.fetchone()
+    conn.close()
 
-        ttk.Label(self.tab_generate, text="Enter Product Price:").pack(pady=10)
-        self.price_entry = ttk.Entry(self.tab_generate, width=30)
-        self.price_entry.pack()
+    if product:
+        messagebox.showinfo("Product Details", f"Serial Number: {product[0]}\nName: {product[1]}\nPrice: {product[2]}")
+    else:
+        messagebox.showerror("Not Found", "No product found with this barcode.")
+    barcode_var.set("")
+    barcode_entry.focus_set()
 
-        ttk.Button(self.tab_generate, text="Generate Code", command=self.handle_generate).pack(pady=20)
+# Handle Enter Key Press
+def handle_enter_price(event):
+    name = name_var.get().strip()
+    price = price_var.get().strip()
 
-    def create_display_tab(self):
-        # Widgets for Display Product Tab
-        ttk.Label(self.tab_display, text="Enter Serial Number (Barcode):").pack(pady=10)
-        self.serial_entry = ttk.Entry(self.tab_display, width=30)
-        self.serial_entry.pack()
+    if not name and not price:
+        barcode_entry.focus_set()  # Jump to Barcode field if both fields are empty
+    else:
+        generate_code_gui()  # Generate the code if fields are filled
 
-        ttk.Button(self.tab_display, text="Display Product", command=self.handle_display).pack(pady=20)
+# GUI Setup
+root = Tk()
+root.title("Product Code Manager")
+root.geometry("400x300")
 
-    def handle_generate(self):
-        name = self.name_entry.get().strip()
-        price = self.price_entry.get().strip()
+setup_database()
 
-        if name and price:
-            try:
-                price = float(price)  # Validate price as a number
-                generate_code(name, price)
-                self.name_entry.delete(0, tk.END)
-                self.price_entry.delete(0, tk.END)
-            except ValueError:
-                messagebox.showerror("Error", "Please enter a valid price!")
-        else:
-            messagebox.showerror("Error", "All fields are required!")
+# Variables
+name_var = StringVar()
+price_var = StringVar()
+barcode_var = StringVar()
 
-    def handle_display(self):
-        serial_number = self.serial_entry.get().strip()
+# Widgets
+Label(root, text="Product Code Manager", font=("Arial", 16)).pack(pady=10)
 
-        if serial_number:
-            display_product(serial_number)
-            self.serial_entry.delete(0, tk.END)
-        else:
-            messagebox.showerror("Error", "Serial number is required!")
+Label(root, text="Product Name:").pack()
+name_entry = Entry(root, textvariable=name_var)
+name_entry.pack()
 
+Label(root, text="Product Price:").pack()
+price_entry = Entry(root, textvariable=price_var)
+price_entry.pack()
 
-if __name__ == "__main__":
-    app = BarcodeApp()
-    app.mainloop()
+Button(root, text="Generate Code", command=generate_code_gui).pack(pady=10)
+
+Label(root, text="Enter Barcode Number:").pack()
+barcode_entry = Entry(root, textvariable=barcode_var)
+barcode_entry.pack()
+
+Button(root, text="Display Product", command=display_product_gui).pack(pady=10)
+
+# Bind Enter Key to Actions
+name_entry.bind("<Return>", lambda event: price_entry.focus_set())  # Jump to Price on Enter
+price_entry.bind("<Return>", handle_enter_price)  # Handle logic for Price field
+barcode_entry.bind("<Return>", lambda event: display_product_gui())  # Display product on Enter
+
+# Main Loop
+root.mainloop()
